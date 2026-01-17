@@ -21,6 +21,13 @@ export async function onRequestPost({ request, env }) {
   const productInfoTrim = productInfo.slice(0, 9000);
   const competitorTrim = competitorNotes.slice(0, 12000);
 
+  // --- Web search options (optional; default ON) ---
+  const enableWebSearch = body?.enable_web_search !== false;
+  const allowedDomains = sanitizeAllowedDomains(body?.allowed_domains);
+  const webQuery =
+    String(body?.web_query || "").trim() ||
+    normalizeSpaces(`${shopName} ${productInfoTrim}`.slice(0, 260));
+
   const BONUS = "Бонус ОТСТЪПКИ + подаръци за лоялни клиенти. Топ цени.";
 
   const instructions = `Ти си експерт копирайтър за e-commerce и SEO за България.
@@ -89,9 +96,30 @@ FAQ:
   const brandLine = shopName ? `Бранд/магазин: ${shopName}\n` : "";
   const toneLine = tone ? `Тон/стил: ${tone}\n` : "";
 
+  // --- Web facts enrichment (step A) ---
+  let webFacts = "";
+  let webSources = [];
+  if (enableWebSearch) {
+    try {
+      const enriched = await collectWebFacts(env, {
+        query: webQuery,
+        productInfo: productInfoTrim,
+        allowedDomains
+      });
+      webFacts = (enriched?.facts || "").slice(0, 6000);
+      webSources = Array.isArray(enriched?.sources) ? enriched.sources : [];
+    } catch {
+      webFacts = "";
+      webSources = [];
+    }
+  }
+
   const input = `${brandLine}${toneLine}
 ТВОЯТ ПРОДУКТ (основен източник):
 ${productInfoTrim}
+
+ФАКТИ ОТ УЕБ (ориентир, НЕ копирай 1:1):
+${webFacts || "(няма)"}
 
 ОРИЕНТИР ОТ ИЗТОЧНИЦИ (НЕ копирай 1:1):
 ${competitorTrim || "(няма)"}
@@ -100,7 +128,7 @@ ${competitorTrim || "(няма)"}
 Генерирай листинг по горните секции. Спазвай всички правила.`;
 
   try {
-    // 1) Основна генерация
+    // 1) Основна генерация (без задължително web_search тук — вече имаме webFacts)
     const data1 = await callOpenAI(env, instructions, input, {
       max_output_tokens: 2600,
       temperature: 0.6,
@@ -116,7 +144,8 @@ ${competitorTrim || "(няма)"}
       bonus: BONUS
     });
 
-    return json({ output: fixed }, 200);
+    // по избор: връщаме web_sources за лог/дебъг (можеш да го махнеш)
+    return json({ output: fixed, web_sources: webSources }, 200);
 
   } catch (e) {
     const msg =
@@ -245,11 +274,123 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/* ---------------- Web search enrichment helpers ---------------- */
+
+function stripInlineCitations(text) {
+  // маха типични inline маркери като [1], [2] ако се появят
+  return String(text || "")
+    .replace(/\s*\[\d+\]\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeAllowedDomains(input) {
+  if (!Array.isArray(input)) return null;
+
+  const out = [];
+  for (const raw of input) {
+    let d = String(raw || "").trim().toLowerCase();
+    if (!d) continue;
+
+    d = d.replace(/^https?:\/\//, "");
+    d = d.split("/")[0].split("?")[0].split("#")[0].trim();
+
+    // basic validation
+    if (!d || d.includes(" ") || !d.includes(".")) continue;
+
+    out.push(d);
+  }
+
+  const uniq = Array.from(new Set(out)).slice(0, 100);
+  return uniq.length ? uniq : null;
+}
+
+function extractWebSources(data) {
+  const urls = [];
+  const out = data?.output;
+  if (!Array.isArray(out)) return [];
+
+  for (const item of out) {
+    if (item?.type !== "web_search_call") continue;
+
+    const sources = item?.action?.sources;
+    if (!Array.isArray(sources)) continue;
+
+    for (const s of sources) {
+      if (typeof s === "string") urls.push(s);
+      else if (s?.url && typeof s.url === "string") urls.push(s.url);
+      else if (s?.source?.url && typeof s.source.url === "string") urls.push(s.source.url);
+    }
+  }
+
+  return Array.from(new Set(urls)).slice(0, 50);
+}
+
+async function collectWebFacts(env, { query, productInfo, allowedDomains }) {
+  const factInstructions = `Ти имаш достъп до web search.
+Цел: извлечи проверими факти за продукт, без да копираш изречения 1:1.
+
+КРИТИЧНИ ПРАВИЛА:
+- Използвай web search и отвори релевантни страници, ако е нужно.
+- Извличай само факти, които са ясни и еднозначни. Ако не си сигурен – пропусни.
+- Не прави медицински твърдения.
+- Не давай линкове, цитати или бележки. Без HTML.
+
+ИЗХОД:
+Върни САМО редове с факти (по един факт на ред). Без заглавия.`;
+
+  const factInput = `Търси за:
+${query}
+
+Контекст от нас:
+${productInfo}`;
+
+  const tools = [
+    allowedDomains?.length
+      ? { type: "web_search", filters: { allowed_domains: allowedDomains } }
+      : { type: "web_search" }
+  ];
+
+  const data = await callOpenAI(env, factInstructions, factInput, {
+    max_output_tokens: 700,
+    temperature: 0.2,
+    timeoutMs: 45000,
+    reasoning: { effort: "low" },
+    tools,
+    tool_choice: "auto",
+    include: ["web_search_call.action.sources"]
+  });
+
+  const facts = stripInlineCitations(extractText(data));
+  const sources = extractWebSources(data);
+
+  return { facts, sources };
+}
+
 /* ---------------- OpenAI call helper (Responses API) ---------------- */
 
-async function callOpenAI(env, instructions, input, { max_output_tokens, temperature, timeoutMs }) {
+async function callOpenAI(
+  env,
+  instructions,
+  input,
+  { max_output_tokens, temperature, timeoutMs, reasoning, tools, tool_choice, include }
+) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs || 45000);
+
+  const payload = {
+    model: env.OPENAI_MODEL || "gpt-5.2",
+    instructions,
+    input,
+    max_output_tokens: max_output_tokens ?? 2200,
+    temperature: temperature ?? 0.7,
+    text: { format: { type: "text" } }
+  };
+
+  if (reasoning) payload.reasoning = reasoning;
+  if (tools) payload.tools = tools;
+  if (tool_choice) payload.tool_choice = tool_choice;
+  if (include) payload.include = include;
 
   const resp = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -258,14 +399,7 @@ async function callOpenAI(env, instructions, input, { max_output_tokens, tempera
       "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5.2",
-      instructions,
-      input,
-      max_output_tokens: max_output_tokens ?? 2200,
-      temperature: temperature ?? 0.7,
-      text: { format: { type: "text" } }
-    })
+    body: JSON.stringify(payload)
   }).finally(() => clearTimeout(timeout));
 
   const contentType = resp.headers.get("content-type") || "";
