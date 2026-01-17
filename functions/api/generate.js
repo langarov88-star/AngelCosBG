@@ -2,124 +2,144 @@ export async function onRequestPost({ request, env }) {
   const authErr = await requireAuth(request, env);
   if (authErr) return authErr;
 
-  const allowed = getAllowedDomains(env); // от ENV или fallback
+  if (!env?.OPENAI_API_KEY) {
+    return json({ error: "OPENAI_API_KEY missing in env" }, 500);
+  }
 
   let body;
   try { body = await request.json(); }
   catch { return json({ error: "Invalid JSON body" }, 400); }
 
-  const urls = Array.isArray(body.urls) ? body.urls.slice(0, 10) : [];
-  if (!urls.length) return json({ error: "Missing urls" }, 400);
+  const shopName = String(body.shop_name || "").trim();
+  const tone = String(body.tone || "").trim();
+  const productInfo = String(body.product_info || "").trim();
+  const competitorNotes = String(body.competitor_notes || "").trim();
 
-  const items = [];
-  for (const raw of urls) {
-    const url = String(raw || "").trim();
-    if (!url) continue;
+  if (!productInfo) return json({ error: "Missing product_info" }, 400);
 
-    const v = validateUrl(url, allowed);
-    if (!v.ok) {
-      items.push({ url, error: v.error });
-      continue;
+  // ограничаваме входа, за да не гръмне токени
+  const productInfoTrim = productInfo.slice(0, 9000);
+  const competitorTrim = competitorNotes.slice(0, 12000);
+
+  const instructions = `Ти си експерт копирайтър за e-commerce и SEO за България.
+ЦЕЛ: генерирай листинг за angelcosmetics.bg на български език, ориентиран към конверсия и UX.
+
+ВАЖНИ ПРАВИЛА:
+- Не копирай 1:1 текстове от източници/конкуренти. Използвай ги само като ориентир.
+- Без медицински твърдения, без “лекува”, без гаранции, без “клинично доказано” ако не е дадено.
+- Ясни, естествени изречения. Без спам с ключови думи.
+- Без HTML. Без емоджита. Без ръчни булети със символи. Ако правиш списъци – само нови редове.
+
+ИЗХОДНА СТРУКТУРА (точно така, в този ред):
+
+Заглавие
+Кратко описание
+Детайлно описание
+
+В "Детайлно описание" задължително включи секции (точно тези заглавия):
+Описание
+Ползи
+Подходящ за
+Активни съставки / Технологии
+Как се използва
+Препоръка за най-добри резултати
+FAQ
+
+ФОРМАТ:
+- Заглавията да са на отделен ред.
+- Под всяко заглавие – текст/редове.
+- FAQ: 3–6 въпроса и отговора (въпрос на ред, после отговор на следващ ред).`;
+
+  const brandLine = shopName ? `Бранд/магазин: ${shopName}\n` : "";
+  const toneLine = tone ? `Тон/стил: ${tone}\n` : "";
+
+  const input = `${brandLine}${toneLine}
+ТВОЯТ ПРОДУКТ (основен източник):
+${productInfoTrim}
+
+ОРИЕНТИР ОТ ИЗТОЧНИЦИ (НЕ копирай 1:1):
+${competitorTrim || "(няма)"}
+
+ЗАДАЧА:
+1) Напиши "Заглавие" – кратко, ясно, продаващо, с ключова полза + тип продукт + марка/серия ако има.
+2) "Кратко описание" – 2–4 изречения за най-важното.
+3) "Детайлно описание" със секции: Описание, Ползи, Подходящ за, Активни съставки / Технологии, Как се използва, Препоръка за най-добри резултати, FAQ.
+4) Не използвай забранени твърдения. Ако липсва точна информация (напр. точни активни съставки), формулирай предпазливо (напр. "може да съдържа" НЕ; по-добре: "с формула, насочена към...") и не измисляй конкретика.`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5.2",
+        instructions,
+        input,
+        max_output_tokens: 2200,
+        temperature: 0.7,
+        text: { format: { type: "text" } }
+      })
+    }).finally(() => clearTimeout(timeout));
+
+    const contentType = resp.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await resp.json()
+      : { raw: await resp.text() };
+
+    if (!resp.ok) {
+      const msg = data?.error?.message || data?.raw || "OpenAI error";
+      return json({ error: msg }, resp.status);
     }
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+    const output = extractText(data);
+    if (!output) {
+      return json({ error: "Empty output from OpenAI", debug: data }, 500);
+    }
 
-      const resp = await fetch(url, {
-        method: "GET",
-        signal: controller.signal,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; AngelCosmeticsListingBot/1.0)" }
-      }).finally(() => clearTimeout(timeout));
+    return json({ output }, 200);
 
-      const ct = (resp.headers.get("content-type") || "").toLowerCase();
-      if (!resp.ok) throw new Error(`Fetch failed (${resp.status})`);
-      if (!ct.includes("text/html") && !ct.includes("text/plain")) {
-        throw new Error(`Unsupported content-type: ${ct || "unknown"}`);
+  } catch (e) {
+    const msg =
+      e?.name === "AbortError"
+        ? "Timeout while calling OpenAI (45s). Try again."
+        : String(e?.message || e || "Server error");
+    return json({ error: msg }, 500);
+  }
+}
+
+/* ---------------- Response text extractor ---------------- */
+
+function extractText(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const out = data?.output;
+  if (Array.isArray(out)) {
+    const parts = [];
+    for (const item of out) {
+      const content = item?.content;
+      if (Array.isArray(content)) {
+        for (const c of content) {
+          if (c?.type === "output_text" && typeof c?.text === "string") parts.push(c.text);
+          else if (typeof c?.text === "string") parts.push(c.text);
+        }
       }
-
-      const html = await resp.text();
-      const title = extractTitle(html);
-      const text = htmlToText(html).slice(0, 6000);
-
-      items.push({ url, title, text });
-
-    } catch (e) {
-      const msg = e?.name === "AbortError" ? "Timeout (15s)" : String(e?.message || e);
-      items.push({ url, error: msg });
     }
+    const joined = parts.join("\n").trim();
+    if (joined) return joined;
   }
 
-  return json({ items }, 200);
+  return "";
 }
 
-function getAllowedDomains(env) {
-  const raw = String(env?.ALLOWED_DOMAINS || "").trim();
-  if (!raw) {
-    return ["zlatnaribka.com", "www.zlatnaribka.com", "arlen.bg", "www.arlen.bg", "notino.com", "www.notino.com"];
-  }
-  return raw.split(",").map(s => s.trim()).filter(Boolean);
-}
-
-function validateUrl(raw, allowed) {
-  let u;
-  try { u = new URL(raw); } catch { return { ok: false, error: "Invalid URL" }; }
-
-  if (u.protocol !== "https:" && u.protocol !== "http:") {
-    return { ok: false, error: "Only http/https allowed" };
-  }
-
-  // strict allowlist
-  const host = u.hostname.toLowerCase();
-  const okHost = allowed.some(d => d.toLowerCase() === host);
-  if (!okHost) {
-    return { ok: false, error: `Domain not allowed: ${host}` };
-  }
-
-  return { ok: true };
-}
-
-function extractTitle(html) {
-  const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (!m) return "";
-  return decodeHtml(m[1]).replace(/\s+/g, " ").trim().slice(0, 180);
-}
-
-function htmlToText(html) {
-  // remove scripts/styles
-  let s = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
-
-  // keep some structure
-  s = s
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h1|h2|h3|h4|tr|section|article)>/gi, "\n");
-
-  // strip tags
-  s = s.replace(/<[^>]+>/g, " ");
-
-  // decode entities
-  s = decodeHtml(s);
-
-  // normalize whitespace
-  s = s.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-  return s;
-}
-
-function decodeHtml(str) {
-  return String(str || "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#039;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-}
-
-/* ---------------- AUTH (same pattern as generate) ---------------- */
+/* ---------------- AUTH (same pattern) ---------------- */
 
 async function requireAuth(request, env) {
   if (!env?.ACCESS_TOKEN_SECRET) return json({ error: "ACCESS_TOKEN_SECRET missing in env" }, 500);
