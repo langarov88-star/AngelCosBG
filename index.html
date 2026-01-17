@@ -133,11 +133,18 @@ https://www.notino.com/..."></textarea>
     localStorage.removeItem(KEY);
   }
 
+  function clearMessages() {
+    appMsg.textContent = "";
+    statusOk.textContent = "";
+    gateMsg.textContent = "";
+  }
+
   function showApp() {
     gate.style.display = "none";
     app.style.display = "block";
     gateMsg.textContent = "";
     pw.value = "";
+    clearMessages();
   }
   function showGate(msg = "") {
     app.style.display = "none";
@@ -146,10 +153,49 @@ https://www.notino.com/..."></textarea>
     pw.value = "";
   }
 
-  function setLoading(isLoading, msg="") {
+  function setLoading(isLoading, msg = "") {
     btnImport.disabled = isLoading;
     btnGen.disabled = isLoading;
     statusOk.textContent = msg || "";
+  }
+
+  async function safeJson(r) {
+    const text = await r.text();
+    try { return { data: JSON.parse(text), raw: text }; }
+    catch { return { data: { error: text }, raw: text }; }
+  }
+
+  function normalizeUrlLines(text) {
+    const lines = String(text || "")
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    // само реални URL-и
+    const out = [];
+    for (const line of lines) {
+      if (!/^https?:\/\//i.test(line)) continue;
+      if (line.includes("...")) continue; // махаме placeholder примери
+      out.push(line);
+    }
+    // unique + limit
+    return Array.from(new Set(out)).slice(0, 10);
+  }
+
+  function itemsToNotes(items, header = "") {
+    const lines = [];
+    if (header) lines.push(header, "---", "");
+    for (const it of (items || [])) {
+      lines.push(`URL: ${it.url || ""}`);
+      if (it.error) {
+        lines.push(`ERROR: ${it.error}`);
+      } else {
+        if (it.title) lines.push(`TITLE: ${it.title}`);
+        if (it.text) lines.push(`TEXT:\n${it.text}`);
+      }
+      lines.push("", "---", "");
+    }
+    return lines.join("\n").trim();
   }
 
   async function login() {
@@ -167,10 +213,7 @@ https://www.notino.com/..."></textarea>
         body: JSON.stringify({ password })
       });
 
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { error: text }; }
-
+      const { data } = await safeJson(r);
       if (!r.ok) throw new Error(data?.error || `Auth failed (${r.status})`);
       if (!data?.token) throw new Error("Missing token from server");
 
@@ -190,130 +233,94 @@ https://www.notino.com/..."></textarea>
   });
 
   async function importCompetitors() {
-    appMsg.textContent = "";
-    statusOk.textContent = "";
+    clearMessages();
+
     const token = getToken();
     if (!token) return showGate("Моля, влез отново.");
 
-    const list = (urls.value || "")
-  .split("\n")
-  .map(s => s.trim())
-  .filter(Boolean);
+    const list = normalizeUrlLines(urls.value);
 
-// Ако няма URL-и -> търси в мрежата по "Твоят продукт"
-if (!list.length) {
-  const pi = (productInfo.value || "").trim();
-  if (!pi) {
-    appMsg.textContent = "За автоматично търсене попълни първо “Твоят продукт”.";
-    return;
-  }
-
-  setLoading(true, "Търся в мрежата по описанието...");
-  competitorNotes.value = "Търся...\n";
-
-  try {
-    const r = await fetch("/api/research", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ product_info: pi })
-    });
-
-    const text = await r.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { error: text }; }
-
-    if (r.status === 401) {
-      clearToken();
-      competitorNotes.value = "";
-      return showGate(data?.error || "Сесията е изтекла. Влез отново.");
-    }
-    if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
-
-    const items = Array.isArray(data?.items) ? data.items : [];
-    const lines = [];
-    lines.push(`SEARCH QUERY: ${data?.query || ""}\n---\n`);
-    for (const it of items) {
-      lines.push(`URL: ${it.url}`);
-      if (it.error) {
-        lines.push(`ERROR: ${it.error}`);
-      } else {
-        if (it.title) lines.push(`TITLE: ${it.title}`);
-        if (it.text) lines.push(`TEXT:\n${it.text}`);
+    // Ако няма URL-и -> web research по "Твоят продукт"
+    if (!list.length) {
+      const pi = (productInfo.value || "").trim();
+      if (!pi) {
+        appMsg.textContent = "За автоматично търсене попълни първо “Твоят продукт”.";
+        return;
       }
-      lines.push("\n---\n");
-    }
 
-    competitorNotes.value = lines.join("\n").trim();
-    statusOk.textContent = `Research готов: ${items.length} източника.`;
+      setLoading(true, "Търся в мрежата по описанието...");
+      competitorNotes.value = "Търся...\n";
 
-  } catch (e) {
-    competitorNotes.value = "";
-    appMsg.textContent = String(e?.message || e);
-  } finally {
-    setLoading(false);
-  }
+      try {
+        const r = await fetch("/api/research", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ product_info: pi })
+        });
 
-  return;
-}
+        const { data } = await safeJson(r);
 
+        if (r.status === 401) {
+          clearToken();
+          competitorNotes.value = "";
+          return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+        }
+        if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
 
-  setLoading(true, "Търся в мрежата по описанието...");
-  competitorNotes.value = "Търся...\n";
+        const items = Array.isArray(data?.items) ? data.items : [];
+        competitorNotes.value = itemsToNotes(items, `SEARCH QUERY: ${data?.query || ""}`);
+        statusOk.textContent = `Research готов: ${items.length} източника.`;
 
-  try {
-    const r = await fetch("/api/research", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ product_info: pi })
-    });
-
-    const text = await r.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { error: text }; }
-
-    if (r.status === 401) {
-      clearToken();
-      competitorNotes.value = "";
-      return showGate(data?.error || "Сесията е изтекла. Влез отново.");
-    }
-    if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
-
-    const items = Array.isArray(data?.items) ? data.items : [];
-    const lines = [];
-    lines.push(`SEARCH QUERY: ${data?.query || ""}\n---\n`);
-    for (const it of items) {
-      lines.push(`URL: ${it.url}`);
-      if (it.error) lines.push(`ERROR: ${it.error}`);
-      else {
-        if (it.title) lines.push(`TITLE: ${it.title}`);
-        if (it.text) lines.push(`TEXT:\n${it.text}`);
+      } catch (e) {
+        competitorNotes.value = "";
+        appMsg.textContent = String(e?.message || e);
+      } finally {
+        setLoading(false);
       }
-      lines.push("\n---\n");
+
+      return;
     }
 
-    competitorNotes.value = lines.join("\n").trim();
-    statusOk.textContent = `Research готов: ${items.length} източника.`;
+    // Ако има URL-и -> import
+    setLoading(true, `Импортирам (${list.length}) URL-и...`);
+    competitorNotes.value = "Импортирам...\n";
 
-  } catch (e) {
-    competitorNotes.value = "";
-    appMsg.textContent = String(e?.message || e);
-  } finally {
-    setLoading(false);
+    try {
+      const r = await fetch("/api/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ urls: list })
+      });
+
+      const { data } = await safeJson(r);
+
+      if (r.status === 401) {
+        clearToken();
+        competitorNotes.value = "";
+        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+      }
+      if (!r.ok) throw new Error(data?.error || `Import failed (${r.status})`);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      competitorNotes.value = itemsToNotes(items, `IMPORTED URLS: ${items.length}`);
+      statusOk.textContent = `Импорт готов: ${items.length} страници.`;
+
+    } catch (e) {
+      competitorNotes.value = "";
+      appMsg.textContent = String(e?.message || e);
+    } finally {
+      setLoading(false);
+    }
   }
-
-  return;
-}
-
 
   async function runGenerate() {
-    appMsg.textContent = "";
-    statusOk.textContent = "";
+    clearMessages();
     result.value = "Генерирам...";
 
     const token = getToken();
@@ -339,44 +346,4 @@ if (!list.length) {
     };
 
     try {
-      const r = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { error: text }; }
-
-      if (r.status === 401) {
-        clearToken();
-        result.value = "";
-        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
-      }
-      if (!r.ok) throw new Error(data?.error || `Request failed (${r.status})`);
-
-      result.value = data?.output || "";
-      statusOk.textContent = "Готово.";
-
-    } catch (e) {
-      result.value = "";
-      appMsg.textContent = String(e?.message || e);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  btnImport.addEventListener("click", importCompetitors);
-  btnGen.addEventListener("click", runGenerate);
-
-  if (getToken()) showApp();
-  else showGate("");
-})();
-</script>
-
-</body>
-</html>
+      const r = await fetch("/api/gener
