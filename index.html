@@ -42,6 +42,7 @@
   </div>
 </noscript>
 
+<!-- gate по подразбиране е ВИДИМ, за да няма “бял екран” -->
 <div id="gate" class="gate" style="display:block">
   <div class="card">
     <h1>Достъп</h1>
@@ -68,7 +69,7 @@
     <div class="actions">
       <button id="logout" type="button">Изход</button>
       <button id="importBtn" type="button">Импорт от конкурентни URL-и</button>
-      <!-- FIX: правилен id="generate" -->
+      <!-- ВАЖНО: id="generate" -->
       <button id="generate" type="button" class="primary">Генерирай листинг</button>
     </div>
   </div>
@@ -133,8 +134,10 @@ https://www.notino.com/..."></textarea>
 
     const btnImport = document.getElementById("importBtn");
     const btnGen = document.getElementById("generate");
+    const btnLogout = document.getElementById("logout");
+    const btnLogin = document.getElementById("login");
 
-    // Debug: показва че JS е зареден
+    // бърз индикатор, че JS работи
     if (statusOk) statusOk.textContent = "JS зареден ✓";
     window.__angelAppLoaded = true;
 
@@ -170,8 +173,8 @@ https://www.notino.com/..."></textarea>
 
     function clearMessages() {
       if (appMsg) appMsg.textContent = "";
-      if (statusOk) statusOk.textContent = "";
       if (gateMsg) gateMsg.textContent = "";
+      // statusOk не чистим напълно, за да виждаш “JS зареден ✓”
     }
 
     function showApp() {
@@ -180,7 +183,6 @@ https://www.notino.com/..."></textarea>
       if (gateMsg) gateMsg.textContent = "";
       if (pw) pw.value = "";
       clearMessages();
-      if (statusOk) statusOk.textContent = "Готово за работа ✓";
     }
 
     function showGate(msg = "") {
@@ -193,7 +195,8 @@ https://www.notino.com/..."></textarea>
     function setLoading(isLoading, msg = "") {
       if (btnImport) btnImport.disabled = isLoading;
       if (btnGen) btnGen.disabled = isLoading;
-      if (statusOk) statusOk.textContent = msg || "";
+      if (btnLogout) btnLogout.disabled = isLoading;
+      if (statusOk) statusOk.textContent = msg || (window.__angelAppLoaded ? "JS зареден ✓" : "");
     }
 
     async function safeJson(r) {
@@ -257,19 +260,6 @@ https://www.notino.com/..."></textarea>
       } catch (e) {
         showGate(String(e?.message || e));
       }
-    }
-
-    const loginBtn = document.getElementById("login");
-    if (loginBtn) {
-      loginBtn.onclick = login;
-      loginBtn.addEventListener("click", login);
-    }
-    if (pw) pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
-
-    const logoutBtn = document.getElementById("logout");
-    if (logoutBtn) {
-      logoutBtn.onclick = () => { clearToken(); showGate(""); };
-      logoutBtn.addEventListener("click", () => { clearToken(); showGate(""); });
     }
 
     async function importCompetitors() {
@@ -415,7 +405,18 @@ https://www.notino.com/..."></textarea>
       }
     }
 
-    // FIX: безопасно закачане + onclick fallback
+    // Bind events (safe + onclick fallback)
+    if (btnLogin) {
+      btnLogin.onclick = login;
+      btnLogin.addEventListener("click", login);
+    }
+    if (pw) {
+      pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+    }
+    if (btnLogout) {
+      btnLogout.onclick = () => { clearToken(); showGate(""); };
+      btnLogout.addEventListener("click", () => { clearToken(); showGate(""); });
+    }
     if (btnImport) {
       btnImport.onclick = importCompetitors;
       btnImport.addEventListener("click", importCompetitors);
@@ -423,6 +424,9 @@ https://www.notino.com/..."></textarea>
     if (btnGen) {
       btnGen.onclick = runGenerate;
       btnGen.addEventListener("click", runGenerate);
+    } else {
+      // ако някой пак е счупил id-то, да го видиш веднага
+      if (statusOk) statusOk.textContent = "Липсва бутон #generate (провери id).";
     }
 
     // Init
