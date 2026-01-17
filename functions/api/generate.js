@@ -21,23 +21,25 @@ export async function onRequestPost({ request, env }) {
   const productInfoTrim = productInfo.slice(0, 9000);
   const competitorTrim = competitorNotes.slice(0, 12000);
 
-  const instructions = `Ти си експерт копирайтър за e-commerce и SEO за България.
-ЦЕЛ: генерирай листинг за angelcosmetics.bg на български език, ориентиран към конверсия и UX.
+  const BONUS = "Бонус ОТСТЪПКИ + подаръци за лоялни клиенти. Топ цени.";
 
-ВАЖНИ ПРАВИЛА:
+  const instructions = `Ти си експерт копирайтър за e-commerce и SEO за България.
+ЦЕЛ: генерирай продуктов листинг за angelcosmetics.bg на български език, ориентиран към конверсия и UX.
+
+КРИТИЧНИ ПРАВИЛА:
 - Не копирай 1:1 текстове от източници/конкуренти. Използвай ги само като ориентир.
 - Без медицински твърдения, без “лекува”, без гаранции, без “клинично доказано” ако не е дадено.
-- Ясни, естествени изречения. Без спам с ключови думи.
-- Без HTML. Без емоджита. Без ръчни булети със символи. Ако правиш списъци – само нови редове.
+- Без HTML. Без емоджита. Без булети/тирета/номерация. Ако има списъци — само нов ред.
+- Не измисляй конкретика. Ако липсва факт (напр. точни активни съставки), пиши общо и предпазливо.
 
-ИЗХОДНА СТРУКТУРА (точно така, в този ред):
+ИЗХОД: Върни САМО секциите по-долу, точно в този ред. Всяко заглавие е на отделен ред, след него съдържание.
 
-Заглавие
-Кратко описание
-Детайлно описание
-
-В "Детайлно описание" задължително включи секции (точно тези заглавия):
-Описание
+СЕКЦИИ (точно тези заглавия):
+H1 Заглавие
+Meta Title
+Meta Description
+HOOK описание
+ДЪЛГО ОПИСАНИЕ
 Ползи
 Подходящ за
 Активни съставки / Технологии
@@ -45,10 +47,43 @@ export async function onRequestPost({ request, env }) {
 Препоръка за най-добри резултати
 FAQ
 
-ФОРМАТ:
-- Заглавията да са на отделен ред.
-- Под всяко заглавие – текст/редове.
-- FAQ: 3–6 въпроса и отговора (въпрос на ред, после отговор на следващ ред).`;
+СПЕЦИФИЧНИ ИЗИСКВАНИЯ:
+H1 Заглавие:
+- Формула: [ключов проблем/решение + тип продукт + основна активна съставка (ако е известна) + бранд + модел/серия + разфасовка]
+- Ако липсва активна съставка или разфасовка — пропусни ги, не измисляй.
+
+Meta Title:
+- Формула: [Бранд + Продукт + кратка ключова полза] | Angel Cosmetics BG
+
+Meta Description:
+- 150–160 символа ОБЩО (включително интервали).
+- Задължително завършва с точно тази фраза: ${BONUS}
+- Реалистично, без “лекува”, без гаранции, без прекалени обещания.
+
+HOOK описание:
+- 1–2 изречения, силно, продажбено, реалистично, ненатрапчиво.
+
+ДЪЛГО ОПИСАНИЕ:
+- SEO + ROI + UX: предназначение, как действа (общо/коректно), реалистични ефекти, доверие, консултантски тон.
+
+Ползи:
+- Само по редове (нов ред), без символи, без тирета.
+
+Подходящ за:
+- По редове: тип кожа/коса, проблеми, сезонност (ако е релевантно), възраст (ако е релевантно).
+
+Активни съставки / Технологии:
+- По редове, формат: "Съставка: кратка полза" (без тирета).
+
+Как се използва:
+- Кратки, ясни инструкции.
+
+Препоръка за най-добри резултати:
+- Cross-sell предложение (категория/тип продукт), без да измисляш конкретен продукт ако не е даден.
+
+FAQ:
+- 3–5 въпроса.
+- Въпрос на ред, отговор на следващ ред. Без номерация.`;
 
   const brandLine = shopName ? `Бранд/магазин: ${shopName}\n` : "";
   const toneLine = tone ? `Тон/стил: ${tone}\n` : "";
@@ -61,56 +96,190 @@ ${productInfoTrim}
 ${competitorTrim || "(няма)"}
 
 ЗАДАЧА:
-1) Напиши "Заглавие" – кратко, ясно, продаващо, с ключова полза + тип продукт + марка/серия ако има.
-2) "Кратко описание" – 2–4 изречения за най-важното.
-3) "Детайлно описание" със секции: Описание, Ползи, Подходящ за, Активни съставки / Технологии, Как се използва, Препоръка за най-добри резултати, FAQ.
-4) Не използвай забранени твърдения. Ако липсва точна информация (напр. точни активни съставки), формулирай предпазливо (напр. "може да съдържа" НЕ; по-добре: "с формула, насочена към...") и не измисляй конкретика.`;
+Генерирай листинг по горните секции. Спазвай всички правила.`;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    // 1) Основна генерация
+    const data1 = await callOpenAI(env, instructions, input, {
+      max_output_tokens: 2600,
+      temperature: 0.6,
+      timeoutMs: 45000
+    });
 
-    const resp = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: env.OPENAI_MODEL || "gpt-5.2",
-        instructions,
-        input,
-        max_output_tokens: 2200,
-        temperature: 0.7,
-        text: { format: { type: "text" } }
-      })
-    }).finally(() => clearTimeout(timeout));
+    const output1 = extractText(data1);
+    if (!output1) return json({ error: "Empty output from OpenAI", debug: data1 }, 500);
 
-    const contentType = resp.headers.get("content-type") || "";
-    const data = contentType.includes("application/json")
-      ? await resp.json()
-      : { raw: await resp.text() };
+    // 2) Проверка и “ремонт” на Meta Description (150–160 + бонус фраза)
+    const fixed = await ensureMetaDescription(output1, env, {
+      productInfo: productInfoTrim,
+      bonus: BONUS
+    });
 
-    if (!resp.ok) {
-      const msg = data?.error?.message || data?.raw || "OpenAI error";
-      return json({ error: msg }, resp.status);
-    }
-
-    const output = extractText(data);
-    if (!output) {
-      return json({ error: "Empty output from OpenAI", debug: data }, 500);
-    }
-
-    return json({ output }, 200);
+    return json({ output: fixed }, 200);
 
   } catch (e) {
     const msg =
       e?.name === "AbortError"
-        ? "Timeout while calling OpenAI (45s). Try again."
+        ? "Timeout while calling OpenAI. Try again."
         : String(e?.message || e || "Server error");
     return json({ error: msg }, 500);
   }
+}
+
+/* ---------------- Meta Description fixer ---------------- */
+
+const HEADINGS = [
+  "H1 Заглавие",
+  "Meta Title",
+  "Meta Description",
+  "HOOK описание",
+  "ДЪЛГО ОПИСАНИЕ",
+  "Ползи",
+  "Подходящ за",
+  "Активни съставки / Технологии",
+  "Как се използва",
+  "Препоръка за най-добри резултати",
+  "FAQ"
+];
+
+function parseSections(text) {
+  const map = {};
+  for (const h of HEADINGS) map[h] = [];
+
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  let current = null;
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const key = HEADINGS.find(h => line.trim() === h);
+    if (key) {
+      current = key;
+      continue;
+    }
+    if (!current) continue;
+    map[current].push(raw);
+  }
+  return map;
+}
+
+function rebuildFromSections(sections) {
+  const out = [];
+  for (const h of HEADINGS) {
+    out.push(h);
+    const body = (sections[h] || []).join("\n").trim();
+    if (body) out.push(body);
+    out.push("");
+  }
+  return out.join("\n").trim();
+}
+
+function normalizeSpaces(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
+}
+
+function endsWithBonus(meta, bonus) {
+  return normalizeSpaces(meta).endsWith(normalizeSpaces(bonus));
+}
+
+async function ensureMetaDescription(fullOutput, env, { productInfo, bonus }) {
+  const sections = parseSections(fullOutput);
+  const metaRaw = (sections["Meta Description"] || []).join("\n").trim();
+
+  // ако секциите не са разпознати -> връщаме както е (по-добре от това да чупим)
+  if (!metaRaw && !fullOutput.includes("Meta Description")) return fullOutput;
+
+  const metaNorm = normalizeSpaces(metaRaw);
+  const metaLen = metaNorm.length;
+
+  const needsFix =
+    metaLen < 150 ||
+    metaLen > 160 ||
+    !endsWithBonus(metaNorm, bonus);
+
+  if (!needsFix) return fullOutput;
+
+  const fixInstructions = `Ти си SEO copywriter на български.
+Задача: напиши Meta Description за продуктова страница.
+
+КРИТИЧНИ ИЗИСКВАНИЯ:
+- 150–160 символа ОБЩО (включително интервали).
+- Задължително завършва с точно: ${bonus}
+- Без медицински твърдения, без гаранции, без “лекува”.
+- Реалистично, продаващо, с ключови думи естествено.
+- Върни САМО meta description текста (без кавички, без заглавия).`;
+
+  const fixInput = `ДАННИ ЗА ПРОДУКТА:
+${productInfo}
+
+ТЕКУЩ (грешен) META DESCRIPTION:
+${metaRaw || "(липсва)"}
+
+НАПИШИ НОВ, КОЙТО СПАЗВА ИЗИСКВАНИЯТА.`;
+
+  const data2 = await callOpenAI(env, fixInstructions, fixInput, {
+    max_output_tokens: 220,
+    temperature: 0.4,
+    timeoutMs: 30000
+  });
+
+  let metaFixed = normalizeSpaces(extractText(data2));
+
+  // ако моделът върне нещо странно – fallback към старото
+  if (!metaFixed) return fullOutput;
+
+  // гарантираме бонус в края (ако случайно го е пропуснал)
+  if (!endsWithBonus(metaFixed, bonus)) {
+    const b = normalizeSpaces(bonus);
+    metaFixed = normalizeSpaces(metaFixed.replace(new RegExp(`${escapeRegExp(b)}$`), ""));
+    metaFixed = normalizeSpaces(metaFixed + " " + b);
+  }
+
+  // ако след това пак е извън 150–160, не правим безкрайни опити – оставяме каквото е, но сменяме секцията
+  sections["Meta Description"] = [metaFixed];
+
+  return rebuildFromSections(sections);
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/* ---------------- OpenAI call helper (Responses API) ---------------- */
+
+async function callOpenAI(env, instructions, input, { max_output_tokens, temperature, timeoutMs }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || 45000);
+
+  const resp = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    signal: controller.signal,
+    headers: {
+      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL || "gpt-5.2",
+      instructions,
+      input,
+      max_output_tokens: max_output_tokens ?? 2200,
+      temperature: temperature ?? 0.7,
+      text: { format: { type: "text" } }
+    })
+  }).finally(() => clearTimeout(timeout));
+
+  const contentType = resp.headers.get("content-type") || "";
+  const data = contentType.includes("application/json")
+    ? await resp.json()
+    : { raw: await resp.text() };
+
+  if (!resp.ok) {
+    const msg = data?.error?.message || data?.raw || "OpenAI error";
+    const err = new Error(msg);
+    err.status = resp.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
 /* ---------------- Response text extractor ---------------- */
