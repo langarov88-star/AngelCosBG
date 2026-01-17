@@ -1,4 +1,13 @@
-export async function onRequestPost({ request, env }) {
+export async function onRequest(context) {
+  const { request } = context;
+
+  if (request.method === "POST") return handlePost(context);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204 });
+
+  return json({ error: "Method Not Allowed" }, 405);
+}
+
+async function handlePost({ request, env }) {
   const authErr = await requireAuth(request, env);
   if (authErr) return authErr;
 
@@ -10,6 +19,7 @@ export async function onRequestPost({ request, env }) {
   if (!urls.length) return json({ error: "Missing urls" }, 400);
 
   const items = [];
+
   for (const raw of urls) {
     const url = String(raw || "").trim();
     if (!url) continue;
@@ -58,6 +68,8 @@ export async function onRequestPost({ request, env }) {
   return json({ items }, 200);
 }
 
+/* -------- URL validation (no allowlist, but SSRF-safe) -------- */
+
 function validateUrlNoAllowlist(raw) {
   let u;
   try { u = new URL(raw); } catch { return { ok: false, error: "Invalid URL" }; }
@@ -68,12 +80,17 @@ function validateUrlNoAllowlist(raw) {
 
   const host = u.hostname.toLowerCase();
 
-  // Block localhost / internal names
+  // Block localhost / local domains
   if (host === "localhost" || host.endsWith(".local")) {
     return { ok: false, error: "Blocked host" };
   }
 
-  // Block IP-literals in private ranges
+  // Block IPv6 literals (simple safety)
+  if (host.includes(":")) {
+    return { ok: false, error: "Blocked IP literal" };
+  }
+
+  // Block private IPv4 literals
   if (isIpLiteral(host) && isPrivateIp(host)) {
     return { ok: false, error: "Blocked private IP" };
   }
@@ -82,7 +99,6 @@ function validateUrlNoAllowlist(raw) {
 }
 
 function isIpLiteral(host) {
-  // IPv4 only (достатъчно за практиката тук)
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
 }
 
@@ -90,21 +106,17 @@ function isPrivateIp(ip) {
   const p = ip.split(".").map(n => Number(n));
   if (p.length !== 4 || p.some(n => Number.isNaN(n) || n < 0 || n > 255)) return true;
 
-  // 10.0.0.0/8
-  if (p[0] === 10) return true;
-  // 127.0.0.0/8
-  if (p[0] === 127) return true;
-  // 169.254.0.0/16
-  if (p[0] === 169 && p[1] === 254) return true;
-  // 172.16.0.0/12
-  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
-  // 192.168.0.0/16
-  if (p[0] === 192 && p[1] === 168) return true;
-  // 0.0.0.0/8
-  if (p[0] === 0) return true;
+  if (p[0] === 10) return true;                 // 10.0.0.0/8
+  if (p[0] === 127) return true;                // 127.0.0.0/8
+  if (p[0] === 169 && p[1] === 254) return true;// 169.254.0.0/16
+  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true; // 172.16.0.0/12
+  if (p[0] === 192 && p[1] === 168) return true;// 192.168.0.0/16
+  if (p[0] === 0) return true;                  // 0.0.0.0/8
 
   return false;
 }
+
+/* -------- HTML -> text helpers -------- */
 
 function extractTitle(html) {
   const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
@@ -113,7 +125,7 @@ function extractTitle(html) {
 }
 
 function htmlToText(html) {
-  let s = html
+  let s = String(html || "")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
@@ -139,7 +151,7 @@ function decodeHtml(str) {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
 }
 
-/* ---------------- AUTH (same pattern) ---------------- */
+/* ---------------- AUTH ---------------- */
 
 async function requireAuth(request, env) {
   if (!env?.ACCESS_TOKEN_SECRET) return json({ error: "ACCESS_TOKEN_SECRET missing in env" }, 500);
@@ -201,6 +213,9 @@ function timingSafeEqual(a, b) {
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
   });
 }
