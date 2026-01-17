@@ -196,62 +196,68 @@ https://www.notino.com/..."></textarea>
     if (!token) return showGate("Моля, влез отново.");
 
     const list = (urls.value || "")
-      .split("\n")
-      .map(s => s.trim())
-      .filter(Boolean);
+  .split("\n")
+  .map(s => s.trim())
+  .filter(Boolean);
 
-    if (!list.length) {
-      appMsg.textContent = "Добави поне 1 URL за импорт.";
-      return;
-    }
-
-    setLoading(true, "Импортирам конкурентни страници...");
-    competitorNotes.value = "Импортирам...\n";
-
-    try {
-      const r = await fetch("/api/import", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ urls: list })
-      });
-
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { error: text }; }
-
-      if (r.status === 401) {
-        clearToken();
-        competitorNotes.value = "";
-        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
-      }
-      if (!r.ok) throw new Error(data?.error || `Import failed (${r.status})`);
-
-      const items = Array.isArray(data?.items) ? data.items : [];
-      const lines = [];
-      for (const it of items) {
-        lines.push(`URL: ${it.url}`);
-        if (it.error) {
-          lines.push(`ERROR: ${it.error}`);
-        } else {
-          if (it.title) lines.push(`TITLE: ${it.title}`);
-          if (it.text) lines.push(`TEXT:\n${it.text}`);
-        }
-        lines.push("\n---\n");
-      }
-
-      competitorNotes.value = lines.join("\n").trim();
-      statusOk.textContent = `Импорт готов: ${items.length} URL(а).`;
-
-    } catch (e) {
-      competitorNotes.value = "";
-      appMsg.textContent = String(e?.message || e);
-    } finally {
-      setLoading(false);
-    }
+// Ако няма URL-и -> търси в мрежата по "Твоят продукт"
+if (!list.length) {
+  const pi = (productInfo.value || "").trim();
+  if (!pi) {
+    appMsg.textContent = "За автоматично търсене попълни първо “Твоят продукт”.";
+    return;
   }
+
+  setLoading(true, "Търся в мрежата по описанието...");
+  competitorNotes.value = "Търся...\n";
+
+  try {
+    const r = await fetch("/api/research", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ product_info: pi })
+    });
+
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+    if (r.status === 401) {
+      clearToken();
+      competitorNotes.value = "";
+      return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+    }
+    if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const lines = [];
+    lines.push(`SEARCH QUERY: ${data?.query || ""}\n---\n`);
+    for (const it of items) {
+      lines.push(`URL: ${it.url}`);
+      if (it.error) lines.push(`ERROR: ${it.error}`);
+      else {
+        if (it.title) lines.push(`TITLE: ${it.title}`);
+        if (it.text) lines.push(`TEXT:\n${it.text}`);
+      }
+      lines.push("\n---\n");
+    }
+
+    competitorNotes.value = lines.join("\n").trim();
+    statusOk.textContent = `Research готов: ${items.length} източника.`;
+
+  } catch (e) {
+    competitorNotes.value = "";
+    appMsg.textContent = String(e?.message || e);
+  } finally {
+    setLoading(false);
+  }
+
+  return;
+}
+
 
   async function runGenerate() {
     appMsg.textContent = "";
