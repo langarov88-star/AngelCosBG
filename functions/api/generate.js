@@ -98,7 +98,7 @@ FAQ:
 
   // --- Web facts enrichment (step A) ---
   let webFacts = "";
-  let webSources = []; // <-- вече ще е масив от {url,title}
+  let webSources = []; // масив от {url,title}
   if (enableWebSearch) {
     try {
       const enriched = await collectWebFacts(env, {
@@ -144,11 +144,12 @@ ${competitorTrim || "(няма)"}
       bonus: BONUS
     });
 
-    // ВРЪЩАМЕ ОТДЕЛНО ПОЛЕ "sources" (url + title), плюс запазваме старото web_sources като списък с url-и
+    // НОВО: "ресурси" (на български) + запазваме и старите полета
     return json({
       output: fixed,
-      sources: webSources,
-      web_sources: webSources.map(s => s.url)
+      ресурси: webSources,                 // <-- новото поле (url + title)
+      sources: webSources,                 // (по желание) англ. еквивалент
+      web_sources: webSources.map(s => s.url) // (по желание) само URL-и
     }, 200);
 
   } catch (e) {
@@ -309,7 +310,7 @@ function sanitizeAllowedDomains(input) {
   return uniq.length ? uniq : null;
 }
 
-// НОВО: връща {url,title} вместо само url-и
+// НОВО: връща масив от {url,title}
 function extractWebSourceObjects(data) {
   const byUrl = new Map();
   const out = data?.output;
@@ -334,7 +335,6 @@ function extractWebSourceObjects(data) {
 
       url = String(url || "").trim();
       title = String(title || "").trim();
-
       if (!url) continue;
 
       if (!byUrl.has(url)) {
@@ -382,7 +382,7 @@ ${productInfo}`;
   });
 
   const facts = stripInlineCitations(extractText(data));
-  const sources = extractWebSourceObjects(data); // <-- вместо extractWebSources
+  const sources = extractWebSourceObjects(data);
 
   return { facts, sources };
 }
