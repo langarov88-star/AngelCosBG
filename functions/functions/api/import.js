@@ -2,8 +2,6 @@ export async function onRequestPost({ request, env }) {
   const authErr = await requireAuth(request, env);
   if (authErr) return authErr;
 
-  const allowed = getAllowedDomains(env); // от ENV или fallback
-
   let body;
   try { body = await request.json(); }
   catch { return json({ error: "Invalid JSON body" }, 400); }
@@ -16,7 +14,7 @@ export async function onRequestPost({ request, env }) {
     const url = String(raw || "").trim();
     if (!url) continue;
 
-    const v = validateUrl(url, allowed);
+    const v = validateUrlNoAllowlist(url);
     if (!v.ok) {
       items.push({ url, error: v.error });
       continue;
@@ -28,8 +26,15 @@ export async function onRequestPost({ request, env }) {
 
       const resp = await fetch(url, {
         method: "GET",
+        redirect: "follow",
         signal: controller.signal,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; AngelCosmeticsListingBot/1.0)" }
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "bg-BG,bg;q=0.9,en;q=0.8",
+          "Cache-Control": "no-cache",
+          "Pragma": "no-cache"
+        }
       }).finally(() => clearTimeout(timeout));
 
       const ct = (resp.headers.get("content-type") || "").toLowerCase();
@@ -53,15 +58,7 @@ export async function onRequestPost({ request, env }) {
   return json({ items }, 200);
 }
 
-function getAllowedDomains(env) {
-  const raw = String(env?.ALLOWED_DOMAINS || "").trim();
-  if (!raw) {
-    return ["zlatnaribka.com", "www.zlatnaribka.com", "arlen.bg", "www.arlen.bg", "notino.com", "www.notino.com"];
-  }
-  return raw.split(",").map(s => s.trim()).filter(Boolean);
-}
-
-function validateUrl(raw, allowed) {
+function validateUrlNoAllowlist(raw) {
   let u;
   try { u = new URL(raw); } catch { return { ok: false, error: "Invalid URL" }; }
 
@@ -69,14 +66,44 @@ function validateUrl(raw, allowed) {
     return { ok: false, error: "Only http/https allowed" };
   }
 
-  // strict allowlist
   const host = u.hostname.toLowerCase();
-  const okHost = allowed.some(d => d.toLowerCase() === host);
-  if (!okHost) {
-    return { ok: false, error: `Domain not allowed: ${host}` };
+
+  // Block localhost / internal names
+  if (host === "localhost" || host.endsWith(".local")) {
+    return { ok: false, error: "Blocked host" };
+  }
+
+  // Block IP-literals in private ranges
+  if (isIpLiteral(host) && isPrivateIp(host)) {
+    return { ok: false, error: "Blocked private IP" };
   }
 
   return { ok: true };
+}
+
+function isIpLiteral(host) {
+  // IPv4 only (достатъчно за практиката тук)
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+function isPrivateIp(ip) {
+  const p = ip.split(".").map(n => Number(n));
+  if (p.length !== 4 || p.some(n => Number.isNaN(n) || n < 0 || n > 255)) return true;
+
+  // 10.0.0.0/8
+  if (p[0] === 10) return true;
+  // 127.0.0.0/8
+  if (p[0] === 127) return true;
+  // 169.254.0.0/16
+  if (p[0] === 169 && p[1] === 254) return true;
+  // 172.16.0.0/12
+  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+  // 192.168.0.0/16
+  if (p[0] === 192 && p[1] === 168) return true;
+  // 0.0.0.0/8
+  if (p[0] === 0) return true;
+
+  return false;
 }
 
 function extractTitle(html) {
@@ -86,24 +113,17 @@ function extractTitle(html) {
 }
 
 function htmlToText(html) {
-  // remove scripts/styles
   let s = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
 
-  // keep some structure
   s = s
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h1|h2|h3|h4|tr|section|article)>/gi, "\n");
 
-  // strip tags
   s = s.replace(/<[^>]+>/g, " ");
-
-  // decode entities
   s = decodeHtml(s);
-
-  // normalize whitespace
   s = s.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   return s;
 }
@@ -119,7 +139,7 @@ function decodeHtml(str) {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
 }
 
-/* ---------------- AUTH (same pattern as generate) ---------------- */
+/* ---------------- AUTH (same pattern) ---------------- */
 
 async function requireAuth(request, env) {
   if (!env?.ACCESS_TOKEN_SECRET) return json({ error: "ACCESS_TOKEN_SECRET missing in env" }, 500);
