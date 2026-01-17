@@ -33,7 +33,17 @@
 </head>
 <body>
 
-<div id="gate" class="gate" style="display:none">
+<noscript>
+  <div class="gate">
+    <div class="card">
+      <h1>JavaScript е изключен</h1>
+      <p class="small">За да работи инструментът, включи JavaScript в браузъра.</p>
+    </div>
+  </div>
+</noscript>
+
+<!-- IMPORTANT FIX: gate по подразбиране е ВИДИМ, за да няма “бял екран” -->
+<div id="gate" class="gate" style="display:block">
   <div class="card">
     <h1>Достъп</h1>
     <p class="small">Въведи парола, за да заредиш инструмента.</p>
@@ -44,6 +54,9 @@
     </div>
     <button id="login" class="primary" style="width:100%;margin-top:10px">Влез</button>
     <div id="gateMsg" class="err"></div>
+    <div class="muted" style="margin-top:10px">
+      Ако виждаш екрана, но бутоните не реагират, вероятно `_headers`/CSP блокира inline script.
+    </div>
   </div>
 </div>
 
@@ -99,251 +112,316 @@ https://www.notino.com/..."></textarea>
 
 <script>
 (() => {
-  const KEY = "angel_listing_token_v1";
+  try {
+    const KEY = "angel_listing_token_v1";
 
-  const gate = document.getElementById("gate");
-  const app = document.getElementById("app");
-  const pw = document.getElementById("pw");
-  const remember = document.getElementById("remember");
-  const gateMsg = document.getElementById("gateMsg");
+    const gate = document.getElementById("gate");
+    const app = document.getElementById("app");
+    const pw = document.getElementById("pw");
+    const remember = document.getElementById("remember");
+    const gateMsg = document.getElementById("gateMsg");
 
-  const appMsg = document.getElementById("appMsg");
-  const statusOk = document.getElementById("statusOk");
+    const appMsg = document.getElementById("appMsg");
+    const statusOk = document.getElementById("statusOk");
 
-  const brandName = document.getElementById("brandName");
-  const tone = document.getElementById("tone");
-  const urls = document.getElementById("urls");
-  const productInfo = document.getElementById("productInfo");
-  const competitorNotes = document.getElementById("competitorNotes");
-  const result = document.getElementById("result");
+    const brandName = document.getElementById("brandName");
+    const tone = document.getElementById("tone");
+    const urls = document.getElementById("urls");
+    const productInfo = document.getElementById("productInfo");
+    const competitorNotes = document.getElementById("competitorNotes");
+    const result = document.getElementById("result");
 
-  const btnImport = document.getElementById("importBtn");
-  const btnGen = document.getElementById("generate");
+    const btnImport = document.getElementById("importBtn");
+    const btnGen = document.getElementById("generate");
 
-  function getToken() {
-    return sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || "";
-  }
-  function setToken(token, persist) {
-    sessionStorage.removeItem(KEY);
-    localStorage.removeItem(KEY);
-    (persist ? localStorage : sessionStorage).setItem(KEY, token);
-  }
-  function clearToken() {
-    sessionStorage.removeItem(KEY);
-    localStorage.removeItem(KEY);
-  }
+    // показваме runtime грешки на екрана вместо “бяло”
+    window.addEventListener("error", (e) => {
+      try {
+        if (app) app.style.display = "none";
+        if (gate) gate.style.display = "block";
+        if (gateMsg) gateMsg.textContent = "JS error: " + (e?.message || String(e));
+      } catch {}
+    });
 
-  function clearMessages() {
-    appMsg.textContent = "";
-    statusOk.textContent = "";
-    gateMsg.textContent = "";
-  }
+    window.addEventListener("unhandledrejection", (e) => {
+      try {
+        if (app) app.style.display = "none";
+        if (gate) gate.style.display = "block";
+        if (gateMsg) gateMsg.textContent = "Promise error: " + String(e?.reason?.message || e?.reason || e);
+      } catch {}
+    });
 
-  function showApp() {
-    gate.style.display = "none";
-    app.style.display = "block";
-    gateMsg.textContent = "";
-    pw.value = "";
-    clearMessages();
-  }
-  function showGate(msg = "") {
-    app.style.display = "none";
-    gate.style.display = "block";
-    gateMsg.textContent = msg;
-    pw.value = "";
-  }
-
-  function setLoading(isLoading, msg = "") {
-    btnImport.disabled = isLoading;
-    btnGen.disabled = isLoading;
-    statusOk.textContent = msg || "";
-  }
-
-  async function safeJson(r) {
-    const text = await r.text();
-    try { return { data: JSON.parse(text), raw: text }; }
-    catch { return { data: { error: text }, raw: text }; }
-  }
-
-  function normalizeUrlLines(text) {
-    const lines = String(text || "")
-      .split("\n")
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    // само реални URL-и
-    const out = [];
-    for (const line of lines) {
-      if (!/^https?:\/\//i.test(line)) continue;
-      if (line.includes("...")) continue; // махаме placeholder примери
-      out.push(line);
+    function getToken() {
+      return sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || "";
     }
-    // unique + limit
-    return Array.from(new Set(out)).slice(0, 10);
-  }
+    function setToken(token, persist) {
+      sessionStorage.removeItem(KEY);
+      localStorage.removeItem(KEY);
+      (persist ? localStorage : sessionStorage).setItem(KEY, token);
+    }
+    function clearToken() {
+      sessionStorage.removeItem(KEY);
+      localStorage.removeItem(KEY);
+    }
 
-  function itemsToNotes(items, header = "") {
-    const lines = [];
-    if (header) lines.push(header, "---", "");
-    for (const it of (items || [])) {
-      lines.push(`URL: ${it.url || ""}`);
-      if (it.error) {
-        lines.push(`ERROR: ${it.error}`);
-      } else {
-        if (it.title) lines.push(`TITLE: ${it.title}`);
-        if (it.text) lines.push(`TEXT:\n${it.text}`);
+    function clearMessages() {
+      if (appMsg) appMsg.textContent = "";
+      if (statusOk) statusOk.textContent = "";
+      if (gateMsg) gateMsg.textContent = "";
+    }
+
+    function showApp() {
+      if (gate) gate.style.display = "none";
+      if (app) app.style.display = "block";
+      if (gateMsg) gateMsg.textContent = "";
+      if (pw) pw.value = "";
+      clearMessages();
+    }
+
+    function showGate(msg = "") {
+      if (app) app.style.display = "none";
+      if (gate) gate.style.display = "block";
+      if (gateMsg) gateMsg.textContent = msg;
+      if (pw) pw.value = "";
+    }
+
+    function setLoading(isLoading, msg = "") {
+      if (btnImport) btnImport.disabled = isLoading;
+      if (btnGen) btnGen.disabled = isLoading;
+      if (statusOk) statusOk.textContent = msg || "";
+    }
+
+    async function safeJson(r) {
+      const text = await r.text();
+      try { return { data: JSON.parse(text), raw: text }; }
+      catch { return { data: { error: text }, raw: text }; }
+    }
+
+    function normalizeUrlLines(text) {
+      const lines = String(text || "")
+        .split("\n")
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const out = [];
+      for (const line of lines) {
+        if (!/^https?:\/\//i.test(line)) continue;
+        if (line.includes("...")) continue; // махаме placeholder
+        out.push(line);
       }
-      lines.push("", "---", "");
-    }
-    return lines.join("\n").trim();
-  }
-
-  async function login() {
-    gateMsg.textContent = "";
-    const password = pw.value || "";
-    if (!password) {
-      gateMsg.textContent = "Въведи парола.";
-      return;
+      return Array.from(new Set(out)).slice(0, 10);
     }
 
-    try {
-      const r = await fetch("/api/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password })
-      });
-
-      const { data } = await safeJson(r);
-      if (!r.ok) throw new Error(data?.error || `Auth failed (${r.status})`);
-      if (!data?.token) throw new Error("Missing token from server");
-
-      setToken(data.token, remember.checked);
-      showApp();
-    } catch (e) {
-      showGate(String(e?.message || e));
+    function itemsToNotes(items, header = "") {
+      const lines = [];
+      if (header) lines.push(header, "---", "");
+      for (const it of (items || [])) {
+        lines.push(`URL: ${it.url || ""}`);
+        if (it.error) {
+          lines.push(`ERROR: ${it.error}`);
+        } else {
+          if (it.title) lines.push(`TITLE: ${it.title}`);
+          if (it.text) lines.push(`TEXT:\n${it.text}`);
+        }
+        lines.push("", "---", "");
+      }
+      return lines.join("\n").trim();
     }
-  }
 
-  document.getElementById("login").addEventListener("click", login);
-  pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
-
-  document.getElementById("logout").addEventListener("click", () => {
-    clearToken();
-    showGate("");
-  });
-
-  async function importCompetitors() {
-    clearMessages();
-
-    const token = getToken();
-    if (!token) return showGate("Моля, влез отново.");
-
-    const list = normalizeUrlLines(urls.value);
-
-    // Ако няма URL-и -> web research по "Твоят продукт"
-    if (!list.length) {
-      const pi = (productInfo.value || "").trim();
-      if (!pi) {
-        appMsg.textContent = "За автоматично търсене попълни първо “Твоят продукт”.";
+    async function login() {
+      if (gateMsg) gateMsg.textContent = "";
+      const password = (pw && pw.value) ? pw.value : "";
+      if (!password) {
+        if (gateMsg) gateMsg.textContent = "Въведи парола.";
         return;
       }
 
-      setLoading(true, "Търся в мрежата по описанието...");
-      competitorNotes.value = "Търся...\n";
+      try {
+        const r = await fetch("/api/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password })
+        });
+
+        const { data } = await safeJson(r);
+        if (!r.ok) throw new Error(data?.error || `Auth failed (${r.status})`);
+        if (!data?.token) throw new Error("Missing token from server");
+
+        setToken(data.token, remember && remember.checked);
+        showApp();
+      } catch (e) {
+        showGate(String(e?.message || e));
+      }
+    }
+
+    document.getElementById("login").addEventListener("click", login);
+    pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+
+    document.getElementById("logout").addEventListener("click", () => {
+      clearToken();
+      showGate("");
+    });
+
+    async function importCompetitors() {
+      clearMessages();
+
+      const token = getToken();
+      if (!token) return showGate("Моля, влез отново.");
+
+      const list = normalizeUrlLines(urls && urls.value);
+
+      // ако няма URL-и -> /api/research
+      if (!list.length) {
+        const pi = (productInfo && productInfo.value ? productInfo.value : "").trim();
+        if (!pi) {
+          if (appMsg) appMsg.textContent = "За автоматично търсене попълни първо “Твоят продукт”.";
+          return;
+        }
+
+        setLoading(true, "Търся в мрежата по описанието...");
+        if (competitorNotes) competitorNotes.value = "Търся...\n";
+
+        try {
+          const r = await fetch("/api/research", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ product_info: pi })
+          });
+
+          const { data } = await safeJson(r);
+
+          if (r.status === 401) {
+            clearToken();
+            if (competitorNotes) competitorNotes.value = "";
+            return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+          }
+          if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
+
+          const items = Array.isArray(data?.items) ? data.items : [];
+          if (competitorNotes) competitorNotes.value = itemsToNotes(items, `SEARCH QUERY: ${data?.query || ""}`);
+          if (statusOk) statusOk.textContent = `Research готов: ${items.length} източника.`;
+
+        } catch (e) {
+          if (competitorNotes) competitorNotes.value = "";
+          if (appMsg) appMsg.textContent = String(e?.message || e);
+        } finally {
+          setLoading(false);
+        }
+
+        return;
+      }
+
+      // ако има URL-и -> /api/import
+      setLoading(true, `Импортирам (${list.length}) URL-и...`);
+      if (competitorNotes) competitorNotes.value = "Импортирам...\n";
 
       try {
-        const r = await fetch("/api/research", {
+        const r = await fetch("/api/import", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${token}`
           },
-          body: JSON.stringify({ product_info: pi })
+          body: JSON.stringify({ urls: list })
         });
 
         const { data } = await safeJson(r);
 
         if (r.status === 401) {
           clearToken();
-          competitorNotes.value = "";
+          if (competitorNotes) competitorNotes.value = "";
           return showGate(data?.error || "Сесията е изтекла. Влез отново.");
         }
-        if (!r.ok) throw new Error(data?.error || `Research failed (${r.status})`);
+        if (!r.ok) throw new Error(data?.error || `Import failed (${r.status})`);
 
         const items = Array.isArray(data?.items) ? data.items : [];
-        competitorNotes.value = itemsToNotes(items, `SEARCH QUERY: ${data?.query || ""}`);
-        statusOk.textContent = `Research готов: ${items.length} източника.`;
+        if (competitorNotes) competitorNotes.value = itemsToNotes(items, `IMPORTED URLS: ${items.length}`);
+        if (statusOk) statusOk.textContent = `Импорт готов: ${items.length} страници.`;
 
       } catch (e) {
-        competitorNotes.value = "";
-        appMsg.textContent = String(e?.message || e);
+        if (competitorNotes) competitorNotes.value = "";
+        if (appMsg) appMsg.textContent = String(e?.message || e);
       } finally {
         setLoading(false);
       }
-
-      return;
     }
 
-    // Ако има URL-и -> import
-    setLoading(true, `Импортирам (${list.length}) URL-и...`);
-    competitorNotes.value = "Импортирам...\n";
+    async function runGenerate() {
+      clearMessages();
+      if (result) result.value = "Генерирам...";
 
-    try {
-      const r = await fetch("/api/import", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ urls: list })
-      });
-
-      const { data } = await safeJson(r);
-
-      if (r.status === 401) {
-        clearToken();
-        competitorNotes.value = "";
-        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+      const token = getToken();
+      if (!token) {
+        if (result) result.value = "";
+        return showGate("Моля, влез отново.");
       }
-      if (!r.ok) throw new Error(data?.error || `Import failed (${r.status})`);
 
-      const items = Array.isArray(data?.items) ? data.items : [];
-      competitorNotes.value = itemsToNotes(items, `IMPORTED URLS: ${items.length}`);
-      statusOk.textContent = `Импорт готов: ${items.length} страници.`;
+      const pi = (productInfo && productInfo.value ? productInfo.value : "").trim();
+      if (!pi) {
+        if (result) result.value = "";
+        if (appMsg) appMsg.textContent = "Полето “Твоят продукт” е задължително.";
+        return;
+      }
 
-    } catch (e) {
-      competitorNotes.value = "";
-      appMsg.textContent = String(e?.message || e);
-    } finally {
-      setLoading(false);
+      setLoading(true, "Генерирам листинг...");
+
+      const payload = {
+        shop_name: (brandName && brandName.value ? brandName.value : "").trim(),
+        tone: (tone && tone.value ? tone.value : "").trim(),
+        product_info: pi,
+        competitor_notes: (competitorNotes && competitorNotes.value ? competitorNotes.value : "").trim()
+      };
+
+      try {
+        const r = await fetch("/api/generate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const { data } = await safeJson(r);
+
+        if (r.status === 401) {
+          clearToken();
+          if (result) result.value = "";
+          return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+        }
+        if (!r.ok) throw new Error(data?.error || `Request failed (${r.status})`);
+
+        if (result) result.value = data?.output || "";
+        if (statusOk) statusOk.textContent = "Готово.";
+
+      } catch (e) {
+        if (result) result.value = "";
+        if (appMsg) appMsg.textContent = String(e?.message || e);
+      } finally {
+        setLoading(false);
+      }
     }
+
+    btnImport.addEventListener("click", importCompetitors);
+    btnGen.addEventListener("click", runGenerate);
+
+    // Init
+    if (getToken()) showApp();
+    else showGate("");
+
+  } catch (e) {
+    const gate = document.getElementById("gate");
+    const app = document.getElementById("app");
+    const gateMsg = document.getElementById("gateMsg");
+    if (app) app.style.display = "none";
+    if (gate) gate.style.display = "block";
+    if (gateMsg) gateMsg.textContent = "JS error: " + String(e?.message || e);
   }
+})();
+</script>
 
-  async function runGenerate() {
-    clearMessages();
-    result.value = "Генерирам...";
-
-    const token = getToken();
-    if (!token) {
-      result.value = "";
-      return showGate("Моля, влез отново.");
-    }
-
-    const pi = (productInfo.value || "").trim();
-    if (!pi) {
-      result.value = "";
-      appMsg.textContent = "Полето “Твоят продукт” е задължително.";
-      return;
-    }
-
-    setLoading(true, "Генерирам листинг...");
-
-    const payload = {
-      shop_name: (brandName.value || "").trim(),
-      tone: (tone.value || "").trim(),
-      product_info: pi,
-      competitor_notes: (competitorNotes.value || "").trim()
-    };
-
-    try {
-      const r = await fetch("/api/gener
+</body>
+</html>
