@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AngelCosmetics Listing Assistant</title>
+  <style>
+    :root{--border:#e6e6e6;--shadow:0 10px 30px rgba(0,0,0,.06);--r:16px;--r2:12px}
+    body{margin:0;background:#fafafa;color:#111;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1040px;margin:32px auto;padding:0 14px}
+    .card{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow)}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    h1{font-size:22px;margin:0}
+    label{display:block;margin:10px 0 6px;font-size:13px;color:#222}
+    select,input,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:var(--r2);font-size:14px;background:#fff}
+    textarea{resize:vertical}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    button{padding:10px 12px;border-radius:var(--r2);border:1px solid #ddd;background:#fff;cursor:pointer}
+    button.primary{background:#111;color:#fff;border:0}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .muted{font-size:12px;color:#777;margin-top:6px}
+    .err{color:#c00;font-size:14px;min-height:18px;margin-top:10px;white-space:pre-wrap}
+    .ok{color:#0a7a2f;font-size:13px;margin-top:8px;white-space:pre-wrap}
+    .gate{max-width:420px;margin:60px auto;padding:0 14px}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .chk{display:flex;align-items:center;gap:8px;font-size:14px}
+    .divider{height:1px;background:#eee;margin:14px 0}
+    .small{font-size:12px;color:#555}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:12px;color:#444;background:#fff}
+  </style>
+</head>
+<body>
+
+<div id="gate" class="gate" style="display:none">
+  <div class="card">
+    <h1>Достъп</h1>
+    <p class="small">Въведи парола, за да заредиш инструмента.</p>
+    <input id="pw" type="password" placeholder="Парола" autocomplete="current-password">
+    <div class="row">
+      <label class="chk"><input id="remember" type="checkbox"> Запомни ме</label>
+      <span class="muted">(по избор)</span>
+    </div>
+    <button id="login" class="primary" style="width:100%;margin-top:10px">Влез</button>
+    <div id="gateMsg" class="err"></div>
+  </div>
+</div>
+
+<div id="app" class="wrap" style="display:none">
+  <div class="top">
+    <div>
+      <h1>AngelCosmetics Listing Assistant</h1>
+      <div class="muted">Генерира листинг за angelcosmetics.bg по фиксирана структура. <span class="pill">BG</span></div>
+    </div>
+    <div class="actions">
+      <button id="logout">Изход</button>
+      <button id="importBtn">Импорт от конкурентни URL-и</button>
+      <button id="generate" class="primary">Generate</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label for="brandName">Brand / Shop name (по желание)</label>
+        <input id="brandName" placeholder="AngelCosmetics.bg">
+        <div class="muted">По желание — ако искаш да се включи в тона/CTA.</div>
+      </div>
+
+      <div>
+        <label for="tone">Тон / стил (по желание)</label>
+        <input id="tone" placeholder="професионално, ясно, продаващо, без излишни обещания">
+        <div class="muted">Кратко описание на стила.</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <label for="urls">Конкурентни URL-и (по 1 на ред) — zlatnaribka.com, arlen.bg, notino.com и др.</label>
+    <textarea id="urls" style="min-height:120px" placeholder="https://zlatnaribka.com/...
+https://arlen.bg/...
+https://www.notino.com/..."></textarea>
+    <div class="muted">Ще извлечем публичен текст от страниците и ще го използваме като ориентир (без копиране 1:1).</div>
+
+    <label for="productInfo">Твоят продукт (задължително)</label>
+    <textarea id="productInfo" style="min-height:160px" placeholder="Име, серия, тип, размер/мл, за кого е, проблем, ключови активни съставки, какво да НЕ се казва, ценова група, уникални предимства..."></textarea>
+
+    <label for="competitorNotes">Извлечена информация от конкуренти (автоматично се попълва след импорт, можеш и ръчно)</label>
+    <textarea id="competitorNotes" style="min-height:140px" placeholder="След импорт ще се появи тук..."></textarea>
+
+    <label for="result">Готов листинг</label>
+    <textarea id="result" style="min-height:340px" placeholder="Тук ще се появи готовият листинг..."></textarea>
+
+    <div id="statusOk" class="ok"></div>
+    <div id="appMsg" class="err"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const KEY = "angel_listing_token_v1";
+
+  const gate = document.getElementById("gate");
+  const app = document.getElementById("app");
+  const pw = document.getElementById("pw");
+  const remember = document.getElementById("remember");
+  const gateMsg = document.getElementById("gateMsg");
+
+  const appMsg = document.getElementById("appMsg");
+  const statusOk = document.getElementById("statusOk");
+
+  const brandName = document.getElementById("brandName");
+  const tone = document.getElementById("tone");
+  const urls = document.getElementById("urls");
+  const productInfo = document.getElementById("productInfo");
+  const competitorNotes = document.getElementById("competitorNotes");
+  const result = document.getElementById("result");
+
+  const btnImport = document.getElementById("importBtn");
+  const btnGen = document.getElementById("generate");
+
+  function getToken() {
+    return sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || "";
+  }
+  function setToken(token, persist) {
+    sessionStorage.removeItem(KEY);
+    localStorage.removeItem(KEY);
+    (persist ? localStorage : sessionStorage).setItem(KEY, token);
+  }
+  function clearToken() {
+    sessionStorage.removeItem(KEY);
+    localStorage.removeItem(KEY);
+  }
+
+  function showApp() {
+    gate.style.display = "none";
+    app.style.display = "block";
+    gateMsg.textContent = "";
+    pw.value = "";
+  }
+  function showGate(msg = "") {
+    app.style.display = "none";
+    gate.style.display = "block";
+    gateMsg.textContent = msg;
+    pw.value = "";
+  }
+
+  function setLoading(isLoading, msg="") {
+    btnImport.disabled = isLoading;
+    btnGen.disabled = isLoading;
+    statusOk.textContent = msg || "";
+  }
+
+  async function login() {
+    gateMsg.textContent = "";
+    const password = pw.value || "";
+    if (!password) {
+      gateMsg.textContent = "Въведи парола.";
+      return;
+    }
+
+    try {
+      const r = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password })
+      });
+
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+      if (!r.ok) throw new Error(data?.error || `Auth failed (${r.status})`);
+      if (!data?.token) throw new Error("Missing token from server");
+
+      setToken(data.token, remember.checked);
+      showApp();
+    } catch (e) {
+      showGate(String(e?.message || e));
+    }
+  }
+
+  document.getElementById("login").addEventListener("click", login);
+  pw.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+
+  document.getElementById("logout").addEventListener("click", () => {
+    clearToken();
+    showGate("");
+  });
+
+  async function importCompetitors() {
+    appMsg.textContent = "";
+    statusOk.textContent = "";
+    const token = getToken();
+    if (!token) return showGate("Моля, влез отново.");
+
+    const list = (urls.value || "")
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (!list.length) {
+      appMsg.textContent = "Добави поне 1 URL за импорт.";
+      return;
+    }
+
+    setLoading(true, "Импортирам конкурентни страници...");
+    competitorNotes.value = "Импортирам...\n";
+
+    try {
+      const r = await fetch("/api/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ urls: list })
+      });
+
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+      if (r.status === 401) {
+        clearToken();
+        competitorNotes.value = "";
+        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+      }
+      if (!r.ok) throw new Error(data?.error || `Import failed (${r.status})`);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const lines = [];
+      for (const it of items) {
+        lines.push(`URL: ${it.url}`);
+        if (it.error) {
+          lines.push(`ERROR: ${it.error}`);
+        } else {
+          if (it.title) lines.push(`TITLE: ${it.title}`);
+          if (it.text) lines.push(`TEXT:\n${it.text}`);
+        }
+        lines.push("\n---\n");
+      }
+
+      competitorNotes.value = lines.join("\n").trim();
+      statusOk.textContent = `Импорт готов: ${items.length} URL(а).`;
+
+    } catch (e) {
+      competitorNotes.value = "";
+      appMsg.textContent = String(e?.message || e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runGenerate() {
+    appMsg.textContent = "";
+    statusOk.textContent = "";
+    result.value = "Генерирам...";
+
+    const token = getToken();
+    if (!token) {
+      result.value = "";
+      return showGate("Моля, влез отново.");
+    }
+
+    const pi = (productInfo.value || "").trim();
+    if (!pi) {
+      result.value = "";
+      appMsg.textContent = "Полето “Твоят продукт” е задължително.";
+      return;
+    }
+
+    setLoading(true, "Генерирам листинг...");
+
+    const payload = {
+      shop_name: (brandName.value || "").trim(),
+      tone: (tone.value || "").trim(),
+      product_info: pi,
+      competitor_notes: (competitorNotes.value || "").trim()
+    };
+
+    try {
+      const r = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: text }; }
+
+      if (r.status === 401) {
+        clearToken();
+        result.value = "";
+        return showGate(data?.error || "Сесията е изтекла. Влез отново.");
+      }
+      if (!r.ok) throw new Error(data?.error || `Request failed (${r.status})`);
+
+      result.value = data?.output || "";
+      statusOk.textContent = "Готово.";
+
+    } catch (e) {
+      result.value = "";
+      appMsg.textContent = String(e?.message || e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  btnImport.addEventListener("click", importCompetitors);
+  btnGen.addEventListener("click", runGenerate);
+
+  if (getToken()) showApp();
+  else showGate("");
+})();
+</script>
+
+</body>
+</html>
