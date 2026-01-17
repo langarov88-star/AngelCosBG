@@ -98,7 +98,7 @@ FAQ:
 
   // --- Web facts enrichment (step A) ---
   let webFacts = "";
-  let webSources = [];
+  let webSources = []; // <-- вече ще е масив от {url,title}
   if (enableWebSearch) {
     try {
       const enriched = await collectWebFacts(env, {
@@ -144,8 +144,12 @@ ${competitorTrim || "(няма)"}
       bonus: BONUS
     });
 
-    // по избор: връщаме web_sources за лог/дебъг (можеш да го махнеш)
-    return json({ output: fixed, web_sources: webSources }, 200);
+    // ВРЪЩАМЕ ОТДЕЛНО ПОЛЕ "sources" (url + title), плюс запазваме старото web_sources като списък с url-и
+    return json({
+      output: fixed,
+      sources: webSources,
+      web_sources: webSources.map(s => s.url)
+    }, 200);
 
   } catch (e) {
     const msg =
@@ -305,8 +309,9 @@ function sanitizeAllowedDomains(input) {
   return uniq.length ? uniq : null;
 }
 
-function extractWebSources(data) {
-  const urls = [];
+// НОВО: връща {url,title} вместо само url-и
+function extractWebSourceObjects(data) {
+  const byUrl = new Map();
   const out = data?.output;
   if (!Array.isArray(out)) return [];
 
@@ -317,13 +322,28 @@ function extractWebSources(data) {
     if (!Array.isArray(sources)) continue;
 
     for (const s of sources) {
-      if (typeof s === "string") urls.push(s);
-      else if (s?.url && typeof s.url === "string") urls.push(s.url);
-      else if (s?.source?.url && typeof s.source.url === "string") urls.push(s.source.url);
+      let url = "";
+      let title = "";
+
+      if (typeof s === "string") {
+        url = s;
+      } else if (s && typeof s === "object") {
+        url = s.url || s.source?.url || "";
+        title = s.title || s.source?.title || "";
+      }
+
+      url = String(url || "").trim();
+      title = String(title || "").trim();
+
+      if (!url) continue;
+
+      if (!byUrl.has(url)) {
+        byUrl.set(url, { url, title });
+      }
     }
   }
 
-  return Array.from(new Set(urls)).slice(0, 50);
+  return Array.from(byUrl.values()).slice(0, 50);
 }
 
 async function collectWebFacts(env, { query, productInfo, allowedDomains }) {
@@ -362,7 +382,7 @@ ${productInfo}`;
   });
 
   const facts = stripInlineCitations(extractText(data));
-  const sources = extractWebSources(data);
+  const sources = extractWebSourceObjects(data); // <-- вместо extractWebSources
 
   return { facts, sources };
 }
